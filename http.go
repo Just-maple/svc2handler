@@ -108,6 +108,7 @@ func (ad *adapter) httpHandler(w http.ResponseWriter, r *http.Request) {
 
 	newParamV := make([]reflect.Value, ad.funcNumIn, ad.funcNumIn)
 	newParam := make([]interface{}, 0, ad.funcNumIn)
+
 	for i := 0; i < ad.funcNumIn; i++ {
 		if i == 0 && ad.firstIsContext {
 			newParamV[i] = reflect.ValueOf(r.Context())
@@ -120,8 +121,10 @@ func (ad *adapter) httpHandler(w http.ResponseWriter, r *http.Request) {
 		newParamV[i] = param.Elem()
 		newParam = append(newParam, param.Interface())
 	}
-	if len(newParam) == 0 || !ad.io.ParamHandler(w, r, newParam) {
+
+	if len(newParam) != 0 && !ad.io.ParamHandler(w, r, newParam) {
 		return
 	}
+
 	ad.retFunc(w, ad.svcV.Call(newParamV))
 }
