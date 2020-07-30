@@ -96,10 +96,21 @@ func HandleSvcWithIO(io IOController, svc interface{}) http.HandlerFunc {
 }
 
 func (ad *adapter) httpHandler(w http.ResponseWriter, r *http.Request) {
+	if ad.funcNumIn == 0 {
+		ad.retFunc(w, ad.svcV.Call(nil))
+		return
+	}
+
+	if ad.funcNumIn == 1 && ad.firstIsContext {
+		ad.retFunc(w, ad.svcV.Call([]reflect.Value{reflect.ValueOf(r.Context())}))
+		return
+	}
+
 	newParamV := make([]reflect.Value, ad.funcNumIn, ad.funcNumIn)
-	newParam := make([]interface{}, ad.funcNumIn, ad.funcNumIn)
+	newParam := make([]interface{}, 0, ad.funcNumIn)
 	for i := 0; i < ad.funcNumIn; i++ {
 		if i == 0 && ad.firstIsContext {
+			newParamV[i] = reflect.ValueOf(r.Context())
 			continue
 		}
 		param := reflect.New(ad.types[i])
@@ -107,16 +118,10 @@ func (ad *adapter) httpHandler(w http.ResponseWriter, r *http.Request) {
 			param.Elem().Set(reflect.New(ad.types[i].Elem()))
 		}
 		newParamV[i] = param.Elem()
-		newParam[i] = param.Interface()
+		newParam = append(newParam, param.Interface())
 	}
-	if ad.firstIsContext {
-		newParam = newParam[1:]
-	}
-	if !ad.io.ParamHandler(w, r, newParam) {
+	if len(newParam) == 0 || !ad.io.ParamHandler(w, r, newParam) {
 		return
-	}
-	if ad.firstIsContext {
-		newParamV[0] = reflect.ValueOf(r.Context())
 	}
 	ad.retFunc(w, ad.svcV.Call(newParamV))
 }
