@@ -149,25 +149,16 @@ func (ad *adapter) emptyParamHandler(w http.ResponseWriter, r *http.Request) {
 	ad.retFunc(w, ad.svcV.Call(nil))
 }
 
-func (ad *adapter) notContextParamsHandler(w http.ResponseWriter, r *http.Request) {
-	var params *paramsCarrier
-
-	if enablePool {
-		params = ad.paramsPool.Get().(*paramsCarrier)
-		defer ad.paramsPool.Put(params)
-	} else {
-		params = ad.initParams()
-	}
-
+func (ad *adapter) doHandle(w http.ResponseWriter, r *http.Request, params *paramsCarrier) {
+	params.values[0] = reflect.ValueOf(r.Context())
 	if len(params.params) != 0 && !ad.io.ParamHandler(w, r, params.params) {
 		return
 	}
 	ad.retFunc(w, ad.svcV.Call(params.values))
 }
 
-func (ad *adapter) contextParamsHandler(w http.ResponseWriter, r *http.Request) {
+func (ad *adapter) notContextParamsHandler(w http.ResponseWriter, r *http.Request) {
 	var params *paramsCarrier
-
 	if enablePool {
 		params = ad.paramsPool.Get().(*paramsCarrier)
 		defer ad.paramsPool.Put(params)
@@ -175,12 +166,19 @@ func (ad *adapter) contextParamsHandler(w http.ResponseWriter, r *http.Request) 
 		params = ad.initParams()
 	}
 
-	params.values[0] = reflect.ValueOf(r.Context())
+	ad.doHandle(w, r, params)
+}
 
-	if len(params.params) != 0 && !ad.io.ParamHandler(w, r, params.params) {
-		return
+func (ad *adapter) contextParamsHandler(w http.ResponseWriter, r *http.Request) {
+	var params *paramsCarrier
+	if enablePool {
+		params = ad.paramsPool.Get().(*paramsCarrier)
+		defer ad.paramsPool.Put(params)
+	} else {
+		params = ad.initParams()
 	}
-	ad.retFunc(w, ad.svcV.Call(params.values))
+
+	ad.doHandle(w, r, params)
 }
 
 var enablePool = false
