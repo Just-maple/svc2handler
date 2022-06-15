@@ -8,8 +8,9 @@ import (
 )
 
 var (
-	rTypeContext = reflect.TypeOf(new(context.Context)).Elem()
-	rTypeError   = reflect.TypeOf(new(error)).Elem()
+	rTypeContextPtr = reflect.TypeOf(new(context.Context))
+	rTypeContext    = rTypeContextPtr.Elem()
+	rTypeError      = reflect.TypeOf(new(error)).Elem()
 )
 
 type (
@@ -130,10 +131,13 @@ func HandleSvcWithIO(io IOController, svc interface{}) http.HandlerFunc {
 }
 
 func (ad *adapter) initParams() *paramsCarrier {
+	paramsNum := ad.funcNumIn
+	if ad.firstIsContext {
+		paramsNum -= 1
+	}
 	ret := &paramsCarrier{
 		values: make([]reflect.Value, ad.funcNumIn),
-		params: make([]interface{}, 0, ad.funcNumIn),
-		ctxPtr: new(context.Context),
+		params: make([]interface{}, 0, paramsNum),
 	}
 	for i := 0; i < ad.funcNumIn; i++ {
 		if i == 0 && ad.firstIsContext {
@@ -147,8 +151,8 @@ func (ad *adapter) initParams() *paramsCarrier {
 			paramI = ret.values[i].Interface()
 		} else {
 			param := reflect.New(ad.types[i])
-			ret.values[i] = param.Elem()
 			paramI = param.Interface()
+			ret.values[i] = param.Elem()
 		}
 		ret.params = append(ret.params, paramI)
 	}
