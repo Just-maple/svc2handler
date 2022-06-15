@@ -150,7 +150,6 @@ func (ad *adapter) emptyParamHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (ad *adapter) doHandle(w http.ResponseWriter, r *http.Request, params *paramsCarrier) {
-	params.values[0] = reflect.ValueOf(r.Context())
 	if len(params.params) != 0 && !ad.io.ParamHandler(w, r, params.params) {
 		return
 	}
@@ -177,6 +176,7 @@ func (ad *adapter) contextParamsHandler(w http.ResponseWriter, r *http.Request) 
 	} else {
 		params = ad.initParams()
 	}
+	params.values[0] = reflect.ValueOf(r.Context())
 
 	ad.doHandle(w, r, params)
 }
