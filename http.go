@@ -30,6 +30,7 @@ type (
 		retFunc        func(w http.ResponseWriter, values []reflect.Value)
 		kinds          []reflect.Kind
 		io             IOController
+		paramsPool     *sync.Pool
 	}
 )
 
@@ -93,90 +94,97 @@ func HandleSvcWithIO(io IOController, svc interface{}) http.HandlerFunc {
 	}
 
 	if ad.funcNumIn == 0 {
-		return func(w http.ResponseWriter, r *http.Request) {
-			ad.retFunc(w, ad.svcV.Call(nil))
-		}
+		return ad.emptyParamHandler
 	}
 
 	for i := 0; i < ad.funcNumIn; i++ {
+		if i == 0 {
+			ad.firstIsContext = ad.types[i] == rTypeContext
+		}
 		ad.types[i] = svcTyp.In(i)
 		ad.kinds[i] = ad.types[i].Kind()
 	}
 
-	if len(ad.types) > 0 {
-		ad.firstIsContext = ad.types[0] == rTypeContext
-	}
-
 	if ad.funcNumIn == 1 && ad.firstIsContext {
-		return func(w http.ResponseWriter, r *http.Request) {
-			ad.retFunc(w, ad.svcV.Call([]reflect.Value{reflect.ValueOf(r.Context())}))
-		}
+		return ad.contextOnlyHandler
 	}
 
-	paramsNum := ad.funcNumIn
-	if ad.firstIsContext {
-		paramsNum -= 1
-	}
-
-	initParams := func() *paramsCarrier {
-		ret := &paramsCarrier{
-			values: make([]reflect.Value, ad.funcNumIn),
-			params: make([]interface{}, 0, paramsNum),
-		}
-		for i := 0; i < ad.funcNumIn; i++ {
-			if i == 0 && ad.firstIsContext {
-				continue
-			}
-			param := reflect.New(ad.types[i])
-			if ad.kinds[i] == reflect.Ptr {
-				param.Elem().Set(reflect.New(ad.types[i].Elem()))
-			}
-			ret.values[i] = param.Elem()
-			ret.params = append(ret.params, param.Interface())
-		}
-		return ret
-	}
-
-	paramsPool := sync.Pool{
+	ad.paramsPool = &sync.Pool{
 		New: func() interface{} {
-			return initParams()
+			return ad.initParams()
 		},
 	}
 
 	if !ad.firstIsContext {
-		return func(w http.ResponseWriter, r *http.Request) {
-			var params *paramsCarrier
-			if enablePool {
-				params = paramsPool.Get().(*paramsCarrier)
-				defer paramsPool.Put(params)
-			} else {
-				params = initParams()
-			}
-			if len(params.params) != 0 && !ad.io.ParamHandler(w, r, params.params) {
-				return
-			}
-			ad.retFunc(w, ad.svcV.Call(params.values))
-		}
+		return ad.notContextParamsHandler
 	}
 
-	return func(w http.ResponseWriter, r *http.Request) {
-		var params *paramsCarrier
-		if enablePool {
-			params = paramsPool.Get().(*paramsCarrier)
-			defer paramsPool.Put(params)
-		} else {
-			params = initParams()
-		}
-		params.values[0] = reflect.ValueOf(r.Context())
-		if len(params.params) != 0 && !ad.io.ParamHandler(w, r, params.params) {
-			return
-		}
-		ad.retFunc(w, ad.svcV.Call(params.values))
+	return ad.contextParamsHandler
+}
+
+func (ad *adapter) initParams() *paramsCarrier {
+	ret := &paramsCarrier{
+		values: make([]reflect.Value, ad.funcNumIn),
+		params: make([]interface{}, 0, ad.funcNumIn),
 	}
+	for i := 0; i < ad.funcNumIn; i++ {
+		if i == 0 && ad.firstIsContext {
+			continue
+		}
+		param := reflect.New(ad.types[i])
+		if ad.kinds[i] == reflect.Ptr {
+			param.Elem().Set(reflect.New(ad.types[i].Elem()))
+		}
+		ret.values[i] = param.Elem()
+		ret.params = append(ret.params, param.Interface())
+	}
+	return ret
+}
+
+func (ad *adapter) contextOnlyHandler(w http.ResponseWriter, r *http.Request) {
+	ad.retFunc(w, ad.svcV.Call([]reflect.Value{reflect.ValueOf(r.Context())}))
+}
+
+func (ad *adapter) emptyParamHandler(w http.ResponseWriter, r *http.Request) {
+	ad.retFunc(w, ad.svcV.Call(nil))
+}
+
+func (ad *adapter) notContextParamsHandler(w http.ResponseWriter, r *http.Request) {
+	var params *paramsCarrier
+
+	if enablePool {
+		params = ad.paramsPool.Get().(*paramsCarrier)
+		defer ad.paramsPool.Put(params)
+	} else {
+		params = ad.initParams()
+	}
+
+	if len(params.params) != 0 && !ad.io.ParamHandler(w, r, params.params) {
+		return
+	}
+	ad.retFunc(w, ad.svcV.Call(params.values))
+}
+
+func (ad *adapter) contextParamsHandler(w http.ResponseWriter, r *http.Request) {
+	var params *paramsCarrier
+
+	if enablePool {
+		params = ad.paramsPool.Get().(*paramsCarrier)
+		defer ad.paramsPool.Put(params)
+	} else {
+		params = ad.initParams()
+	}
+
+	params.values[0] = reflect.ValueOf(r.Context())
+
+	if len(params.params) != 0 && !ad.io.ParamHandler(w, r, params.params) {
+		return
+	}
+	ad.retFunc(w, ad.svcV.Call(params.values))
 }
 
 var enablePool = false
 
-func EnablePool() {
-	enablePool = true
+func SetPoolEnable(enable bool) {
+	enablePool = enable
 }
