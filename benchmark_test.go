@@ -52,22 +52,23 @@ func runRequest(B *testing.B, r http.HandlerFunc, method, path string) {
 	}
 }
 
-type testIO struct {
+type benchmarkIO struct {
 }
 
-func (t testIO) Response(w http.ResponseWriter, ret interface{}, err error) {
+func (t benchmarkIO) Response(w http.ResponseWriter, ret interface{}, err error) {
 	return
 }
 
-func (t testIO) ParamHandler(w http.ResponseWriter, r *http.Request, params []interface{}) (ok bool) {
+func (t benchmarkIO) ParamHandler(w http.ResponseWriter, r *http.Request, params []interface{}) (ok bool) {
 	return true
 }
 
-var wrapper = CreateSvcHandler(&testIO{})
+var wrapper = CreateSvcHandler(&benchmarkIO{})
 
 type (
-	t struct {
+	testStruct struct {
 		A int
+		B string
 	}
 
 	aSetter interface {
@@ -75,7 +76,7 @@ type (
 	}
 )
 
-func (t *t) SetA(a int) {
+func (t *testStruct) SetA(a int) {
 	t.A = a
 }
 
@@ -97,32 +98,37 @@ func BenchmarkRunMap(b *testing.B) {
 }
 
 func BenchmarkRunStruct(b *testing.B) {
-	e := wrapper(func(t) {})
+	e := wrapper(func(testStruct) {})
 	runRequest(b, e, "GET", "")
 }
 
 func BenchmarkRunMultiParam(b *testing.B) {
-	e := wrapper(func(t, context.Context) {})
+	e := wrapper(func(testStruct, context.Context) {})
 	runRequest(b, e, "GET", "")
 }
 
 func BenchmarkRunStructWithCtx(b *testing.B) {
-	e := wrapper(func(context.Context, t) {})
+	e := wrapper(func(context.Context, testStruct) {})
+	runRequest(b, e, "GET", "")
+}
+
+func BenchmarkRunStructWithCtxPtr(b *testing.B) {
+	e := wrapper(func(context.Context, *testStruct) {})
 	runRequest(b, e, "GET", "")
 }
 
 func BenchmarkRunMultiParamContext(b *testing.B) {
-	e := wrapper(func(context.Context, t, int) {})
+	e := wrapper(func(context.Context, testStruct, int) {})
 	runRequest(b, e, "GET", "")
 }
 
 func BenchmarkRunMultiParam2(b *testing.B) {
-	e := wrapper(func(t, t, t, string, int) {})
+	e := wrapper(func(testStruct, testStruct, testStruct, string, int) {})
 	runRequest(b, e, "GET", "")
 }
 
 func BenchmarkRunMultiStruct5WithCtx(b *testing.B) {
-	e := wrapper(func(context.Context, t, t, t, string, int) {})
+	e := wrapper(func(context.Context, testStruct, testStruct, testStruct, string, int) {})
 	runRequest(b, e, "GET", "")
 }
 

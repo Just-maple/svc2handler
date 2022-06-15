@@ -47,22 +47,26 @@ func (w SvcHandler) Handle(svc interface{}) http.HandlerFunc {
 type paramsCarrier struct {
 	values []reflect.Value
 	params []interface{}
+	ctxPtr *context.Context
 }
 
 func HandleSvcWithIO(io IOController, svc interface{}) http.HandlerFunc {
-	v := reflect.ValueOf(svc)
-	svcTyp := v.Type()
-	funcNumOut := svcTyp.NumOut()
-	funcNumIn := svcTyp.NumIn()
-	ad := adapter{
-		svcV:       v,
-		funcNumIn:  funcNumIn,
-		funcNumOut: svcTyp.NumOut(),
-		types:      make([]reflect.Type, funcNumIn, funcNumIn),
-		kinds:      make([]reflect.Kind, funcNumIn, funcNumIn),
-		io:         io,
-	}
-	if v.Kind() != reflect.Func {
+	var (
+		rv         = reflect.ValueOf(svc)
+		svcTyp     = rv.Type()
+		funcNumOut = svcTyp.NumOut()
+		funcNumIn  = svcTyp.NumIn()
+		ad         = adapter{
+			svcV:       rv,
+			funcNumIn:  funcNumIn,
+			funcNumOut: svcTyp.NumOut(),
+			types:      make([]reflect.Type, funcNumIn, funcNumIn),
+			kinds:      make([]reflect.Kind, funcNumIn, funcNumIn),
+			io:         io,
+		}
+	)
+
+	if rv.Kind() != reflect.Func {
 		panic("invalid service func")
 	}
 	switch funcNumOut {
@@ -98,21 +102,24 @@ func HandleSvcWithIO(io IOController, svc interface{}) http.HandlerFunc {
 	}
 
 	for i := 0; i < ad.funcNumIn; i++ {
+		ad.types[i] = svcTyp.In(i)
 		if i == 0 {
 			ad.firstIsContext = ad.types[i] == rTypeContext
 		}
-		ad.types[i] = svcTyp.In(i)
 		ad.kinds[i] = ad.types[i].Kind()
-	}
-
-	if ad.funcNumIn == 1 && ad.firstIsContext {
-		return ad.contextOnlyHandler
+		if ad.kinds[i] == reflect.Ptr {
+			ad.types[i] = ad.types[i].Elem()
+		}
 	}
 
 	ad.paramsPool = &sync.Pool{
 		New: func() interface{} {
 			return ad.initParams()
 		},
+	}
+
+	if ad.funcNumIn == 1 && ad.firstIsContext {
+		return ad.contextOnlyHandler
 	}
 
 	if !ad.firstIsContext {
@@ -126,23 +133,33 @@ func (ad *adapter) initParams() *paramsCarrier {
 	ret := &paramsCarrier{
 		values: make([]reflect.Value, ad.funcNumIn),
 		params: make([]interface{}, 0, ad.funcNumIn),
+		ctxPtr: new(context.Context),
 	}
 	for i := 0; i < ad.funcNumIn; i++ {
 		if i == 0 && ad.firstIsContext {
+			ret.ctxPtr = new(context.Context)
+			ret.values[0] = reflect.ValueOf(ret.ctxPtr).Elem()
 			continue
 		}
-		param := reflect.New(ad.types[i])
+		var paramI interface{}
 		if ad.kinds[i] == reflect.Ptr {
-			param.Elem().Set(reflect.New(ad.types[i].Elem()))
+			ret.values[i] = reflect.New(ad.types[i])
+			paramI = ret.values[i].Interface()
+		} else {
+			param := reflect.New(ad.types[i])
+			ret.values[i] = param.Elem()
+			paramI = param.Interface()
 		}
-		ret.values[i] = param.Elem()
-		ret.params = append(ret.params, param.Interface())
+		ret.params = append(ret.params, paramI)
 	}
 	return ret
 }
 
 func (ad *adapter) contextOnlyHandler(w http.ResponseWriter, r *http.Request) {
-	ad.retFunc(w, ad.svcV.Call([]reflect.Value{reflect.ValueOf(r.Context())}))
+	c := ad.paramsPool.Get().(*paramsCarrier)
+	*c.ctxPtr = r.Context()
+	ad.retFunc(w, ad.svcV.Call(c.values))
+	ad.paramsPool.Put(c)
 }
 
 func (ad *adapter) emptyParamHandler(w http.ResponseWriter, r *http.Request) {
@@ -176,9 +193,9 @@ func (ad *adapter) contextParamsHandler(w http.ResponseWriter, r *http.Request) 
 	} else {
 		params = ad.initParams()
 	}
-	params.values[0] = reflect.ValueOf(r.Context())
-
+	*params.ctxPtr = r.Context()
 	ad.doHandle(w, r, params)
+	return
 }
 
 var enablePool = false
