@@ -32,6 +32,8 @@ type (
 		kinds          []reflect.Kind
 		io             IOController
 		paramsPool     *sync.Pool
+
+		resetParams []reflect.Value
 	}
 )
 
@@ -123,6 +125,16 @@ func HandleSvcWithIO(io IOController, svc interface{}) http.HandlerFunc {
 		return ad.contextOnlyHandler
 	}
 
+	ad.resetParams = ad.initParams().values
+	for i := range ad.resetParams {
+		if i == 0 && ad.firstIsContext {
+			continue
+		}
+		if ad.kinds[i] == reflect.Ptr {
+			ad.resetParams[i] = ad.resetParams[i].Elem()
+		}
+	}
+
 	if !ad.firstIsContext {
 		return ad.notContextParamsHandler
 	}
@@ -135,26 +147,26 @@ func (ad *adapter) initParams() *paramsCarrier {
 	if ad.firstIsContext {
 		paramsNum -= 1
 	}
+
 	ret := &paramsCarrier{
 		values: make([]reflect.Value, ad.funcNumIn),
-		params: make([]interface{}, 0, paramsNum),
+		params: make([]interface{}, paramsNum),
 	}
-	for i := 0; i < ad.funcNumIn; i++ {
+
+	for i, j := 0, 0; i < ad.funcNumIn; i++ {
 		if i == 0 && ad.firstIsContext {
 			ret.ctxPtr = new(context.Context)
-			ret.values[0] = reflect.ValueOf(ret.ctxPtr).Elem()
+			ret.values[i] = reflect.ValueOf(ret.ctxPtr).Elem()
 			continue
 		}
-		var paramI interface{}
-		if ad.kinds[i] == reflect.Ptr {
-			ret.values[i] = reflect.New(ad.types[i])
-			paramI = ret.values[i].Interface()
-		} else {
-			param := reflect.New(ad.types[i])
-			paramI = param.Interface()
-			ret.values[i] = param.Elem()
+
+		ret.values[i] = reflect.New(ad.types[i])
+		ret.params[j] = ret.values[i].Interface()
+		j++
+
+		if ad.kinds[i] != reflect.Ptr {
+			ret.values[i] = ret.values[i].Elem()
 		}
-		ret.params = append(ret.params, paramI)
 	}
 	return ret
 }
@@ -180,7 +192,7 @@ func (ad *adapter) doHandle(w http.ResponseWriter, r *http.Request, params *para
 func (ad *adapter) notContextParamsHandler(w http.ResponseWriter, r *http.Request) {
 	var params *paramsCarrier
 	if enablePool {
-		params = ad.paramsPool.Get().(*paramsCarrier)
+		params = ad.getParamsFromPool()
 		defer ad.paramsPool.Put(params)
 	} else {
 		params = ad.initParams()
@@ -189,10 +201,25 @@ func (ad *adapter) notContextParamsHandler(w http.ResponseWriter, r *http.Reques
 	ad.doHandle(w, r, params)
 }
 
+func (ad *adapter) getParamsFromPool() (params *paramsCarrier) {
+	params = ad.paramsPool.Get().(*paramsCarrier)
+	for i, v := range params.values {
+		if i == 0 && ad.firstIsContext {
+			continue
+		}
+		if ad.kinds[i] == reflect.Ptr {
+			v.Elem().Set(ad.resetParams[i])
+		} else {
+			v.Set(ad.resetParams[i])
+		}
+	}
+	return
+}
+
 func (ad *adapter) contextParamsHandler(w http.ResponseWriter, r *http.Request) {
 	var params *paramsCarrier
 	if enablePool {
-		params = ad.paramsPool.Get().(*paramsCarrier)
+		params = ad.getParamsFromPool()
 		defer ad.paramsPool.Put(params)
 	} else {
 		params = ad.initParams()

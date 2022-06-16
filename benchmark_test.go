@@ -2,6 +2,7 @@ package svc2handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"reflect"
 	"testing"
@@ -112,8 +113,36 @@ func BenchmarkRunStructWithCtx(b *testing.B) {
 	runRequest(b, e, "GET", "")
 }
 
+func BenchmarkRunStructWithCtxPooled(b *testing.B) {
+	SetPoolEnable(true)
+	e := wrapper(func(context.Context, testStruct) {})
+	runRequest(b, e, "GET", "")
+}
+
 func BenchmarkRunStructWithCtxPtr(b *testing.B) {
 	e := wrapper(func(context.Context, *testStruct) {})
+	runRequest(b, e, "GET", "")
+}
+
+func BenchmarkRunStructWithCtxPtrPooled(b *testing.B) {
+	SetPoolEnable(true)
+	e := wrapper(func(context.Context, *testStruct) {})
+	runRequest(b, e, "GET", "")
+}
+
+func BenchmarkRunStructWithCtxPtrJson(b *testing.B) {
+	SetPoolEnable(true)
+	e := wrapper(func(ctx context.Context, t *testStruct) {
+		_ = json.Unmarshal([]byte(`{"a":1,"b":"2"}`), &t)
+	})
+	runRequest(b, e, "GET", "")
+}
+
+func BenchmarkRunStructWithCtxPtrRawJson(b *testing.B) {
+	e := func(writer http.ResponseWriter, request *http.Request) {
+		t := new(testStruct)
+		_ = json.Unmarshal([]byte(`{"a":1,"b":"2"}`), &t)
+	}
 	runRequest(b, e, "GET", "")
 }
 
